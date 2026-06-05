@@ -286,7 +286,7 @@ def process_and_upload():
     log.info(f"✓ Uploaded {len(records)} cleaned reviews to Supabase")
 
     # Log run metadata
-    supabase.table("scrape_runs").insert({
+    supabase.table("cleaned_reviews").insert({
         "run_id": run_id,
         "run_date": datetime.now().strftime("%Y%m%d_%H%M%S"),
         "total_reviews": len(records),
