@@ -191,6 +191,8 @@ def deduplicate_and_filter(records: list[dict]) -> list[dict]:
 
 
 # ── Main pipeline ─────────────────────────────────────────────────────────────
+
+
 def process_and_upload():
     supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
@@ -208,32 +210,23 @@ def process_and_upload():
     # Transform each review
     records = []
     for review in reviews:
-        # Flatten
+        # ... (same transformation code as before)
         flat = flatten_fields(review)
         dates = parse_dates(review)
 
-        # Clean text
         title_clean = clean_text(review.get("title", ""))
         text_clean = clean_text(review.get("text", ""))
         word_count = len(text_clean.split()) if text_clean else 0
 
-        # Skip if too short (will filter later, but pre-check)
         if word_count < 8:
             continue
 
-        # Sentiment
         rating = review.get("rating")
         sentiment = sentiment_class(rating)
-
-        # Reviewer type
         trip_type = flat["trip_type"]
         rev_type = reviewer_type(trip_type)
-
-        # Period
         year = dates["year"]
         period = add_period(year)
-
-        # Sacred flags
         sacred = add_sacred_flags(text_clean)
 
         record = {
@@ -276,17 +269,24 @@ def process_and_upload():
 
     log.info(f"Final records to upload: {len(records)}")
 
-    # Batch insert into Supabase
+    # ========== UPSERT: Delete old data for this run_id, insert fresh ==========
+
+    # 1. Delete previous records with same run_id (if any)
+    log.info(f"Clearing old data for run_id: {run_id}")
+    supabase.table("cleaned_reviews").delete().eq("run_id", run_id).execute()
+
+    # 2. Insert fresh records in batches
     BATCH_SIZE = 100
     for i in range(0, len(records), BATCH_SIZE):
         batch = records[i:i+BATCH_SIZE]
         supabase.table("cleaned_reviews").insert(batch).execute()
         log.info(f"  Uploaded batch {i//BATCH_SIZE + 1}/{(len(records)-1)//BATCH_SIZE + 1}")
 
-    log.info(f"✓ Uploaded {len(records)} cleaned reviews to Supabase")
+    log.info(f"✓ Uploaded {len(records)} fresh cleaned reviews to Supabase")
 
-    # Log run metadata
-    supabase.table("cleaned_reviews").insert({
+    # 3. Upsert scrape_runs metadata (delete old, insert new)
+    supabase.table("scrape_runs").delete().eq("run_id", run_id).execute()
+    supabase.table("scrape_runs").insert({
         "run_id": run_id,
         "run_date": datetime.now().strftime("%Y%m%d_%H%M%S"),
         "total_reviews": len(records),
@@ -295,6 +295,7 @@ def process_and_upload():
         "scraped_at": datetime.now().isoformat(),
     }).execute()
 
+    log.info(f"✓ Run tracked: {run_id}")
     return len(records)
 
 
